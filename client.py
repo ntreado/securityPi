@@ -1,15 +1,25 @@
-#client.py
+"""
+File: client.py
+Author: Nick Treado
+ECE 4564
+"""
+
 from Tkinter import *
 from time import strftime
 import socket
 import cv2
 import traceback
 import pickle
+import threading
+import time
 
 requestGET = "POTATO /camera/0/snapshot HTTP/1.1\r\n\r\n"
 requestTrigger = "POST /sensor/0/trigger HTTP/1.1\r\n\r\n"
 requestStart = "POST /client/0 HTTP/1.1\r\n\r\n"
 requestClose = "DELETE /client/0 HTTP/1.1\r\n\r\n"
+stream = True
+streamLock = threading.Lock()
+frameGlobal = None
 
 
 def readFrame(s):
@@ -32,54 +42,73 @@ def readFrame(s):
     return frame
 
 
+def startStreamThread():
+    global streamLock
+    global stream
+    streamLock.acquire()
+    if stream is False:
+        streamLock.release()
+        return
+    stream = False
+    streamLock.release()
+    streamThread = threading.Thread(target=startStream, args=())
+    streamThread.daemon = True
+    streamThread.start()
+
+
 def startStream():
     listBox.insert(END, strftime("%Y-%m-%d %H:%M:%S")+" -> Stream started")
-    clientsocket.send(requestTrigger.encode())
-    readFrame(clientsocket)
-    clientsocket.send(requestGET.encode())
+    button.config(state='disable')
+    button3.config(state='normal')
+    global stream
+    global frameGlobal
+    while stream is False:
+        clientsocket.send(requestTrigger.encode())
+        readFrame(clientsocket)
+        clientsocket.send(requestGET.encode())
 
-    frame = readFrame(clientsocket)
-    frame = pickle.loads(frame)
-    frame = cv2.imdecode(frame, cv2.CV_LOAD_IMAGE_COLOR)
+        frame = readFrame(clientsocket)
+        frame = pickle.loads(frame)
+        frame = cv2.imdecode(frame, cv2.CV_LOAD_IMAGE_COLOR)
+        frameGlobal = frame
 
-    cv2.namedWindow("Stream", cv2.CV_WINDOW_AUTOSIZE)
-    cv2.startWindowThread()
-    cv2.imshow("Stream", frame)
+        cv2.namedWindow("Stream", cv2.CV_WINDOW_AUTOSIZE)
+        cv2.startWindowThread()
+        cv2.imshow("Stream", frame)
 
-    #cv2.imshow('frame', frame)
-    #cv2.waitKey()
+        streamLock.acquire()
+        if stream is True:
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)
+        streamLock.release()
 
 
 def stopStream():
+    button.config(state='normal')
+    button3.config(state='disable')
+    global streamLock
+    global stream
+    global frameGlobal
     listBox.insert(END, strftime("%Y-%m-%d %H:%M:%S")+" -> Stream stopped")
+    streamLock.acquire()
+    if stream is True:
+        streamLock.release()
+        return
+    stream = True
+    streamLock.release()
     cv2.destroyAllWindows()
     cv2.waitKey(1)
-    #clientsocket.send('Stop stream')
 
 
-def displayStream():
-
-    listBox.insert(END, strftime("%Y-%m-%d %H:%M:%S")+" -> Stream window opened")
-    #clientsocket.send('Display stream')
-
-    NewWin = Toplevel(root)
-    NewWin.title('ICU Security Stream')
-    NewWin.geometry('500x500')
-    button3.config(state='disable')
-
-    def quit_win():
-        NewWin.destroy()
-        button3.config(state='normal')
-        listBox.insert(END, strftime("%Y-%m-%d %H:%M:%S")+" -> Stream window closed")
-
-    QuitButton = Button(NewWin,text='Quit',command=quit_win)
-    QuitButton.pack(side=BOTTOM, pady=10)
-    NewWin.protocol("WM_DELETE_WINDOW", quit_win) 
+def takeScreenshot():
+    listBox.insert(END, strftime("%Y-%m-%d %H:%M:%S")+" -> Screenshot saved")
+    cv2.imwrite('ICUscreenshot.jpg', frameGlobal, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
 
 
 def exitProgram():
     clientsocket.send(requestClose.encode())
     readFrame(clientsocket)
+    stopStream()
     root.destroy()
 
 
@@ -92,9 +121,9 @@ try:
     clientsocket.send(requestStart.encode())
     readFrame(clientsocket)
 except Exception, ne:
-     print "Error connecting to server: ", ne.message
-     print traceback.print_exc()
-     sys.exit(-1)
+    print "Error connecting to server: ", ne.message
+    print traceback.print_exc()
+    sys.exit(-1)
 
 root = Tk()
 root.geometry('500x510+350+70')
@@ -102,14 +131,14 @@ root.wm_title("ICU")
 
 title = Label(root, text='Image Capture Unit', font=("Helvetica", 16))
 
-button = Button(root, text='Start Stream', command=startStream)
+button = Button(root, text='Start Stream', command=startStreamThread)
 button2 = Button(root, text='Stop Stream', command=stopStream)
-button3 = Button(root, text='Display Stream', command=displayStream)
+button3 = Button(root, text='Take Screenshot', command=takeScreenshot, state='disable')
 button4 = Button(root, text='Exit', command=exitProgram)
 
 logLabel = Label(root, text="Log")
 
-listBox = Listbox(root,width=40)
+listBox = Listbox(root, width=40)
 listBox.insert(END, strftime("%Y-%m-%d %H:%M:%S")+" -> GUI started")
 
 title.pack(pady=10)
