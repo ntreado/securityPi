@@ -14,7 +14,8 @@ import threading
 import time
 
 requestGET = "POTATO /camera/0/snapshot HTTP/1.1\r\n\r\n"
-requestTrigger = "POST /sensor/0/trigger HTTP/1.1\r\n\r\n"
+requestTriggerStart = "POST /camera/0/startstream HTTP/1.1\r\n\r\n"
+requestTriggerStop = "POST /camera/0/stopstream HTTP/1.1\r\n\r\n"
 requestStart = "POST /client/0 HTTP/1.1\r\n\r\n"
 requestClose = "DELETE /client/0 HTTP/1.1\r\n\r\n"
 stream = True
@@ -23,6 +24,7 @@ frameGlobal = None
 
 
 def readFrame(s):
+    streamLock.acquire()
     f = s.makefile()
     state = 0
     while True:
@@ -39,6 +41,7 @@ def readFrame(s):
             break
 
     f.close()
+    streamLock.release()
     return frame
 
 
@@ -62,9 +65,9 @@ def startStream():
     button3.config(state='normal')
     global stream
     global frameGlobal
+    clientsocket.send(requestTriggerStart.encode())
+    readFrame(clientsocket)
     while stream is False:
-        clientsocket.send(requestTrigger.encode())
-        readFrame(clientsocket)
         clientsocket.send(requestGET.encode())
 
         frame = readFrame(clientsocket)
@@ -76,16 +79,18 @@ def startStream():
         cv2.startWindowThread()
         cv2.imshow("Stream", frame)
 
-        streamLock.acquire()
+        #streamLock.acquire()
         if stream is True:
             cv2.destroyAllWindows()
             cv2.waitKey(1)
-        streamLock.release()
+        #streamLock.release()
 
 
 def stopStream():
     button.config(state='normal')
     button3.config(state='disable')
+    clientsocket.send(requestTriggerStop.encode())
+    readFrame(clientsocket)
     global streamLock
     global stream
     global frameGlobal
