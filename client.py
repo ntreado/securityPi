@@ -12,13 +12,16 @@ import traceback
 import pickle
 import threading
 import time
+import json
+import unicodedata
 
 requestGET = "POTATO /camera/0/snapshot HTTP/1.1\r\n\r\n"
 requestTriggerStart = "POST /camera/0/startstream HTTP/1.1\r\n\r\n"
 requestTriggerStop = "POST /camera/0/stopstream HTTP/1.1\r\n\r\n"
 requestStart = "POST /client/0 HTTP/1.1\r\n\r\n"
 requestClose = "DELETE /client/0 HTTP/1.1\r\n\r\n"
-stream = True
+sensorListen = "GET /client/0/events HTTP/1.1\r\n\r\n"
+stream = False
 streamLock = threading.Lock()
 frameGlobal = None
 
@@ -49,10 +52,10 @@ def startStreamThread():
     global streamLock
     global stream
     streamLock.acquire()
-    if stream is False:
+    if stream is True:
         streamLock.release()
         return
-    stream = False
+    stream = True
     streamLock.release()
     streamThread = threading.Thread(target=startStream, args=())
     streamThread.daemon = True
@@ -67,10 +70,12 @@ def startStream():
     global frameGlobal
     clientsocket.send(requestTriggerStart.encode())
     readFrame(clientsocket)
-    while stream is False:
+    while stream is True:
         clientsocket.send(requestGET.encode())
 
         frame = readFrame(clientsocket)
+        if len(frame) is 0:
+            continue
         frame = pickle.loads(frame)
         frame = cv2.imdecode(frame, cv2.CV_LOAD_IMAGE_COLOR)
         frameGlobal = frame
@@ -79,11 +84,11 @@ def startStream():
         cv2.startWindowThread()
         cv2.imshow("Stream", frame)
 
-        #streamLock.acquire()
-        if stream is True:
+        streamLock.acquire()
+        if stream is False:
             cv2.destroyAllWindows()
             cv2.waitKey(1)
-        #streamLock.release()
+        streamLock.release()
 
 
 def stopStream():
@@ -96,13 +101,16 @@ def stopStream():
     global frameGlobal
     listBox.insert(END, strftime("%Y-%m-%d %H:%M:%S")+" -> Stream stopped")
     streamLock.acquire()
-    if stream is True:
+    if stream is False:
         streamLock.release()
         return
-    stream = True
+    stream = False
     streamLock.release()
     cv2.destroyAllWindows()
     cv2.waitKey(1)
+    clientsocket.send(sensorListen.encode())
+    readFrame(clientsocket)
+    threading.Thread(target=readSensor, args=()).start()
 
 
 def takeScreenshot():
@@ -117,8 +125,29 @@ def exitProgram():
     root.destroy()
 
 
+def readSensor():
+    global stream
+    streamLock.acquire()
+    while stream is False:
+        streamLock.release()
+        clientsocket.send(sensorListen.encode())
+        response = readFrame(clientsocket)
+        mesg = json.loads(response)
+        #print mesg
+        if mesg['count'] >= 1:
+            for j in mesg['events']:
+                i = unicodedata.normalize("NFKD", j["type"]).encode("ascii", "ignore")
+                if "start stream" in i:
+                    listBox.insert(END, strftime("%Y-%m-%d %H:%M:%S")+" -> Sensor triggered")
+                    startStreamThread()
+        streamLock.acquire()
+        time.sleep(0.5)
+    streamLock.release()
+
+
 try:
-    host = 'nu.sacst.net'
+    #host = 'nu.sacst.net'
+    host = '172.31.174.40'
     port = 5707
     size = 1024
     clientsocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -154,4 +183,5 @@ logLabel.pack()
 listBox.pack()
 button4.pack(side=BOTTOM, pady=10)
 
+threading.Thread(target=readSensor, args=()).start()
 root.mainloop()
