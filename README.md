@@ -14,3 +14,10 @@ Libraries Used:
   TWISTED
   TKINTER
   GPIO
+
+Install & startup:
+1. Install third party libraries
+2. Start server
+3. Edit socket connections in all client code (client, camera, IR sensor) to use server ip address
+4. Start client programs in any order
+
